@@ -1,0 +1,268 @@
+---
+title: "Manging Data"
+format: gfm
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(paged.print = FALSE)
+```
+
+
+```{r}
+customer_data <- readRDS("repo-clone/Custdata/custdata.RDS")
+```
+
+# Cleaning
+
+## Domain-specific
+
+```{r}
+#| message: false
+library(dplyr)
+library(data.table)
+```
+
+```{r}
+customer_data_dt <- as.data.table(customer_data)
+customer_data_df <- customer_data
+```
+
+Dealing with invalid values
+
+```{r}
+customer_data_df <- customer_data_df %>% 
+  mutate(age = na_if(age, 0),
+         income = ifelse(income < 0, NA, income))
+head(customer_data_df)
+```
+
+```{r}
+customer_data_dt[, `:=`(age = na_if(age, 0),
+                        income = ifelse(income < 0, NA, income))]
+customer_data_dt
+```
+
+```{r}
+nrow(customer_data_df)
+nrow(customer_data_dt)
+```
+
+Handling special coding
+
+```{r}
+customer_data_df <- customer_data_df %>% 
+  mutate(gas_with_rent = (gas_usage == 1),
+         gas_with_electricity = (gas_usage == 2),
+         no_gas_bill = (gas_usage == 3),
+         gas_usage = ifelse(gas_usage < 4, NA, gas_usage))
+head(customer_data_df)
+```
+
+```{r}
+customer_data_dt[, `:=`(gas_with_rent = (gas_usage == 1),
+                        gas_with_electricity = (gas_usage == 2),
+                        no_gas_bill = (gas_usage == 3),
+                        gas_usage = ifelse(gas_usage < 4, 
+                                           NA, gas_usage))]
+head(customer_data_dt)
+```
+
+## Missing values
+
+```{r}
+sapply(customer_data_df, function(x) sum(is.na(x)))
+```
+
+```{r}
+summarise(customer_data_df,
+          across(everything(), ~ sum(is.na(.))))
+```
+
+```{r}
+cna <- function(x) {sum(is.na(x))}
+customer_data_dt[, lapply(.SD, function(x) sum(is.na(x)))]
+```
+
+## Automatic treatment of missing variables.
+
+Choose all columns except target and custid.
+
+```{r}
+varlist <- setdiff(colnames(customer_data_df),
+                   c("custid", "health_ins"))
+```
+
+```{r}
+library(vtreat)
+treatment_plan <- design_missingness_treatment(
+  customer_data_df, varlist = varlist)
+training_prepared <- prepare(treatment_plan, customer_data_df)
+```
+
+```{r}
+setdiff(colnames(training_prepared),
+        colnames(customer_data_df))
+```
+
+```{r}
+sum(sapply(training_prepared, function(col) {sum(is.na(col))}))
+```
+
+```{r}
+htmissing <- which(is.na(customer_data_df$housing_type))
+cols <- c("custid", "is_employed", "num_vehicles",
+           "housing_type", "health_ins")
+customer_data_df[htmissing, cols] %>% head()
+```
+
+```{r}
+cols <- c("custid", "is_employed", "is_employed_isBAD",
+          "num_vehicles","num_vehicles_isBAD",
+          "housing_type", "health_ins")
+training_prepared[htmissing, cols] %>% head()
+```
+
+```{r}
+customer_data_df %>% 
+  summarise(mean_vehicles = mean(num_vehicles, na.rm = T),
+            mean_employed = mean(as.numeric(is_employed), na.rm = T))
+```
+
+# Data Transformations
+
+## Normalization
+
+Normalizing income by state
+
+```{r}
+median_income_table <- readRDS("repo-clone/Custdata/median_income.RDS")
+head(median_income_table)
+```
+
+```{r}
+training_prepared <- training_prepared %>% 
+  left_join(median_income_table, by = "state_of_res") %>% 
+  mutate(income_normalized = income / median_income)
+head(training_prepared[, c("income", "median_income",
+                           "income_normalized")])
+summary(training_prepared$income_normalized)
+```
+
+Normalizing age by mean
+
+```{r}
+summary(training_prepared$age)
+mean_age <- mean(training_prepared$age)
+age_normalized <- training_prepared$age/mean_age
+summary(age_normalized)
+```
+
+## Centering and scaling
+
+```{r}
+(mean_age <- mean(training_prepared$age))
+(sd_age <- sd(training_prepared$age))
+```
+
+```{r}
+mean_age + c(-sd_age, sd_age)
+```
+
+
+```{r}
+training_prepared$scaled_age <- (
+  training_prepared$age - mean_age) / sd_age
+```
+
+```{r}
+training_prepared %>%
+  filter(abs(age - mean_age) < sd_age) %>%
+  select(age, scaled_age) %>%
+  head()
+training_prepared %>%
+  filter(abs(age - mean_age) > sd_age) %>%
+  select(age, scaled_age) %>%
+  head()
+```
+
+Typical customers have age magnitude less than 1.
+
+Multiple variables with `scale()`
+
+```{r}
+dataf <- training_prepared[, c("age", "income", 
+                               "num_vehicles", "gas_usage")]
+summary(dataf)
+```
+
+```{r}
+dataf_scaled <- scale(dataf, center = T, scale = T)
+summary(dataf_scaled)
+```
+
+```{r}
+(means <- attr(dataf_scaled, "scaled:center"))
+(sds <- attr(dataf_scaled, "scaled:scale"))
+```
+
+```{r}
+attributes(dataf_scaled)
+```
+
+## Log transformations
+
+For financial data, use _signed log_ transformation.
+
+Treats values between 1 and -1 as zero, otherwise applies the appropriate sign to $\log(|x|)$.
+
+```{r}
+signedlog10 <- function(x) {
+  ifelse(abs(x) <= 1, 0, sign(x)*log10(abs(x)))
+}
+```
+
+# Sampling for modeling and validation
+
+## Creating a sample group column
+
+```{r}
+set.seed(25643)
+customer_data_df$gp <- runif(nrow(customer_data))
+customer_test <- subset(customer_data_df, gp <= 0.1)
+customer_train <- subset(customer_data_df, gp > 0.1)
+dim(customer_test); dim(customer_train)
+```
+
+```{r}
+set.seed(25643)
+test <- slice_sample(customer_data_df, prop = 0.1)
+dim(test)
+dim(setdiff(customer_data_df, test))
+```
+
+## Record grouping
+
+Ensure households are kept together in the train/test split
+
+```{r}
+hh_data <- readRDS("repo-clone/Custdata/hhdata.RDS")
+hh <- unique(hh_data$household_id)
+```
+
+
+```{r}
+set.seed(243674)
+households <- data.frame(
+  household_id = hh, gp = runif(length(hh)),
+  stringsAsFactors = F)
+household_data <- left_join(hh_data, households,
+                            by = "household_id")
+head(household_data)
+```
+
+
+
+
+
+
+
