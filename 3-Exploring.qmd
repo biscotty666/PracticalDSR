@@ -1,0 +1,230 @@
+---
+title: "Exploring Data"
+format: gfm
+---
+
+```{r}
+customer_data <- readRDS("repo-clone/Custdata/custdata.RDS")
+```
+
+# Problems revealed by data summaries
+
+At this stage, you’re looking for several common issues: - Missing values - Invalid values and outliers - Data ranges that are too wide or too narrow - The units of the data
+
+```{r}
+summary(customer_data)
+```
+
+Note high NAs in is_employed, strange min/max in income, age
+
+# Using graphics
+
++---------------------------+-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| Graph type                | Uses                                                        | Examples                                                                                                                              |
++===========================+=============================================================+=======================================================================================================================================+
+| Histogram or density plot | - Examine data range                                        | - Examine the distribution of customer age to get the typi- cal customer age range                                                    |
+|                           | - Check number of modes                                     | - Examine the distribution of customer income to get typi- cal income range                                                           |
+|                           | - Check if distribution is normal/ lognormal                |                                                                                                                                       |
+|                           | - Check for anomalies and outliers                          |                                                                                                                                       |
++---------------------------+-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+| Bar chart or dot plot     | Compare frequencies of the values of a categorical variable | Count the number of customers from different states of residence to determine which states have the largest or smallest customer base |
++---------------------------+-------------------------------------------------------------+---------------------------------------------------------------------------------------------------------------------------------------+
+
+## Single variable
+
+### Histograms
+
+```{r pracr-3-1}
+library(ggplot2)
+ggplot(customer_data, aes(x = gas_usage)) +
+  geom_histogram(binwidth = 10, fill = "grey")
+```
+
+From the docs for `gas_usage`
+
+| Value   | Definition                           |
+|---------|--------------------------------------|
+| NA      | Unknown or not applicable            |
+| 001     | Included in rent or condo fee        |
+| 002     | Included in electricity payment      |
+| 003     | No charge or gas not used            |
+| 004-999 | \$4 to \$999 (rounded and top-coded) |
+
+### Density plots
+
+```{r pracr-3-2}
+library(scales)
+ggplot(customer_data, aes(x = income)) +
+  geom_density() +
+  scale_x_continuous(labels = dollar)
+```
+
+```{r pracr-3-3}
+ggplot(customer_data, aes(x = income)) +
+  geom_density() +
+  scale_x_log10(breaks = c(10, 100, 1000, 10000, 100000),
+                labels = dollar) +
+  annotation_logticks(sides = "bt", color = "grey")
+```
+
+### Bar charts and dot plots
+
+```{r pracr-3-4}
+ggplot(customer_data, aes(x = state_of_res)) +
+  geom_bar(fill = "purple") +
+  coord_flip()
+```
+
+```{r pracr-3-5}
+#| message: false
+library(WVPlots)
+ClevelandDotPlot(customer_data, "state_of_res",
+                 sort = 1, title = "Customers by state") +
+  coord_flip()
+```
+
+## Relationship between two variables
+
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Graph type              | Uses                                                                                                                                                                                                                                                                                         | Examples                                                                                                                                                                                                                                                                |
++=========================+==============================================================================================================================================================================================================================================================================================+=========================================================================================================================================================================================================================================================================+
+| Line plot               | Shows the relationship between two continuous variables. Best when that relationship is functional, or nearly so.                                                                                                                                                                            | Plot y = f(x).                                                                                                                                                                                                                                                          |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Scatter plot            | Shows the relationship between two continuous variables. Best when the relationship is too loose or cloud-like to be easily seen on a line plot.                                                                                                                                             | Plot income vs. years in the work- force (income on the y-axis).                                                                                                                                                                                                        |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Smoothing curve         | Shows underlying “average” relation- ship, or trend, between two continu- ous variables. Can also be used to show the relationship between a con- tinuous and a binary or Boolean vari- able: the fraction of true values of the discrete variable as a function of the continuous variable. | Estimate the "average" relationship of income to years in the work- force.                                                                                                                                                                                              |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Hexbin plot             | Shows the relationship between two continuous variables when the data is very dense.                                                                                                                                                                                                         | Plot income vs. years in the work- force for a large population.                                                                                                                                                                                                        |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Stacked bar chart       | Shows the relationship between two categorical variables (var1 and var2). Highlights the frequencies of each value of var1. Works best when var2 is binary.                                                                                                                                  | Plot insurance coverage (var2) as a function of marital status (var1) when you wish to retain information about the number of people in each marital category.                                                                                                          |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Side-by-side bar chart  | Shows the relationship between two categorical variables (var1 and var2). Good for comparing the fre- quencies of each value of var2 across the values of var1. Works best when var2 is binary.                                                                                              | Plot insurance coverage (var2) as a function of marital status (var1) when you wish to directly compare the number of insured and unin- sured people in each marital category.                                                                                          |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Shadow plot             | Shows the relationship between two categorical variables (var1 and var2). Displays the frequency of each value of var1, while allowing comparison of var2 values both within and across the categories of var1.                                                                              | Plot insurance coverage (var2) as a function of marital status (var1) when you wish to directly compare the number of insured and unin- sured people in each marital cate- gory and still retain information about the total number of people in each marital category. |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Filled bar chart        | Shows the relationship between two categorical variables (var1 and var2). Good for comparing the rela- tive frequencies of each value of var2 within each value of var1. Works best when var2 is binary.                                                                                     | Plot insurance coverage (var2) as a function of marital status (var1) when you wish to compare the ratio of uninsured to insured people in each marital category.                                                                                                       |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+| Bar chart with faceting | Shows the relationship between two categorical variables (var1 and var2). Best for comparing the rela- tive frequencies of each value of var2 within each value of var1 when var2 takes on more than two values.                                                                             | Plot the distribution of marital sta- tus (var2) as a function of housing type (var1).                                                                                                                                                                                  |
++-------------------------+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------+
+
+### Scatter plots and smoothing curves
+
+```{r}
+customer_data2 <- subset(
+  customer_data,
+  age > 0 & age < 100 &
+    income > 0 & income < 200000
+)
+cor(customer_data2$age, customer_data2$income)
+```
+
+This suggests little correlation, but perhaps this is misleading.
+
+```{r pracr-3-6}
+#| message: false
+library(dplyr)
+set.seed(245566)
+customer_data_samp <- sample_frac(
+  customer_data2, size = 0.1, replace = F)
+ggplot(customer_data_samp, aes(x = age, y = income)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle("Income as a function of age")
+```
+
+```{r pracr-3-7}
+WVPlots::BinaryYScatterPlot(
+  customer_data_samp, "age", "health_ins",
+  title = "Probability of health insurance by age")
+```
+
+### Hexbin plots
+
+```{r pracr-3-8}
+WVPlots::HexBinPlot(
+  customer_data2, "age", "income",
+  "Income as a function of age") +
+  geom_smooth(color = "black", se = F)
+```
+
+### Bar charts for 2 categorical variables
+
+Stacked by default
+
+```{r pracr-3-9}
+ggplot(customer_data, aes(x=marital_status, fill=health_ins)) +
+  geom_bar()
+```
+
+Side-by-side
+
+```{r pracr-3-10}
+ggplot(customer_data, aes(x=marital_status, fill=health_ins)) +
+  geom_bar(position = "dodge")
+```
+
+Shadow plot
+
+```{r pracr-3-11}
+WVPlots::ShadowPlot(
+  customer_data, "marital_status", "health_ins",
+  title = "Health insurance status by marital status")
+```
+
+Filled bar chart
+
+```{r pracr-3-12}
+ggplot(customer_data, aes(x = marital_status, fill = health_ins)) +
+  geom_bar(position = "fill")
+```
+
+With and without facets
+
+```{r}
+cdata <- subset(customer_data, !is.na(housing_type))
+```
+
+### Side-by-side bar
+
+```{r pracr-3-13}
+ggplot(cdata, aes(x = housing_type, fill = marital_status)) +
+  geom_bar(position = "dodge") +
+  scale_fill_brewer(palette = "Dark2") +
+  coord_flip()
+```
+
+```{r pracr-3-14}
+ggplot(cdata, aes(x = marital_status)) +
+  geom_bar(fill = "darkgrey") +
+  facet_wrap(~ housing_type, scale = "free_x") +
+  coord_flip()
+```
+
+### Comparing continuous and categorical
+
+```{r pracr-3-15}
+customer_data3 <- subset(customer_data2, 
+                         marital_status %in% c("Never married",
+                                               "Widowed"))
+ggplot(customer_data3, aes(x = age, color = marital_status,
+                           linetype = marital_status)) +
+  geom_density() +
+  scale_color_brewer(palette = "Dark2")
+```
+
+The problem with the plot is that it gives the impression that each group are the same size.
+
+```{r pracr-3-16}
+#| warning: false
+ShadowHist(customer_data3, "age", "marital_status",
+           "Age distribution for not married populations",
+           binwidth = 5)
+```
+
+For more than 2 categories, must use facet wraps
+
+```{r pracr-3-17}
+ggplot(customer_data2, aes(x = age)) +
+  geom_density() +
+  facet_wrap(~marital_status)
+```
