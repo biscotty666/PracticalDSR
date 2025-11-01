@@ -62,6 +62,7 @@
               pander
               plotly
               pwr
+              qmrparser
               randomForest
               readr
               readxl
