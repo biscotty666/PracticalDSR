@@ -1,0 +1,250 @@
+---
+title: "Logistic Regression"
+format: gfm
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(paged.print = FALSE)
+```
+
+```{r}
+#| message: false
+library(data.table)
+```
+
+
+Predict values between 0 and 1, eg. probabilities, used for classification.
+
+Logit and sigmoid functions are inverses.
+
+```{r}
+logit <- function(p) { log(p / (1 - p))}
+sigmoid <- function(x) { 1 / (1 + exp(-x))}
+sigmoid(logit(0.7))
+```
+
+The overall goal is to design a plan that provisions neonatal emergency equipment to delivery rooms. Newborn babies are assessed at one and five minutes after birth using what’s called the Apgar test, which is designed to determine if a baby needs immediate emergency care or extra medical attention. A baby who scores below 7 (on a scale from 0 to 10) on the Apgar scale needs extra attention.
+
+We’ll use a sample dataset from the 2010 CDC natality public-use data file (http://mng.bz/pnGy). This dataset records statistics for all US births registered in the 50 states and the District of Columbia, including facts about the mother and father, and about the delivery. The sample has just over 26,000 births in a data frame called sdata.1 The data is split into training and test sets, using a random grouping column that we added, which allows for repeatable experiments with the split ratio.
+
+```{r}
+load("repo-clone/CDC/NatalRiskData.rData")
+train <- sdata[sdata$ORIGRANDGROUP <= 5, ]
+test <- sdata[sdata$ORIGRANDGROUP > 5, ]
+```
+
+```{r}
+names(train)
+```
+
+| Variable | Type | Description |
+|----|----|----|
+| atRisk | Logical | TRUE if 5-minute Apgar score \< 7; FALSE otherwise |
+| PWGT | Numeric | Mother’s prepregnancy weight |
+| UPREVIS | Numeric (integer) | Number of prenatal medical visits |
+| CIG_REC | Logical | TRUE if smoker; FALSE otherwise |
+| GESTREC3 | Categorical | Two categories: \<37 weeks (premature) and \>=37 weeks |
+| DPLURAL | Categorical | Birth plurality, three categories: single/twin/triplet+ |
+| ULD_MECO | Logical | TRUE if moderate/heavy fecal staining of amniotic fluid |
+| ULD_PRECIP | Logical | TRUE for unusually short labor (\< three hours) |
+| ULD_BREECH | Logical | TRUE for breech (pelvis first) birth position |
+| URF_DIAB | Logical | TRUE if mother is diabetic |
+| URF_CHYPER | Logical | TRUE if mother has chronic hypertension |
+| URF_PHYPER | Logical | TRUE if mother has pregnancy-related hypertension |
+| URF_ECLAM | Logical | TRUE if mother experienced eclampsia: pregnancy- related seizures |
+
+
+
+## Building the logistic regression model
+
+```{r}
+complications <- c("ULD_MECO", "ULD_PRECIP", "ULD_BREECH")
+risk_factors <- c("URF_DIAB", "URF_CHYPER", "URF_PHYPER", "URF_ECLAM")
+
+y <- "atRisk"
+x <- c("PWGT", "UPREVIS", "CIG_REC", "GESTREC3", "DPLURAL",
+       complications, risk_factors)
+fmla <- wrapr::mk_formula(y, x)
+fmla
+```
+
+```{r}
+model <- glm(fmla, data = train, family = binomial(link = "logit"))
+```
+
+The family argument can be used to select many different behaviors of the glm() function. For example, choosing family = quasipoisson chooses a “log” link, which models the logarithm of the prediction as linear in the inputs. This would be another approach to try for the income prediction problem of section 7.1. However, it is a subtle point to determine whether a log transformation and linear model or a log-link and a generalized linear model is a better choice for a given problem. The log-link will be better at predicting total incomes (scoring an error of \$50,000 for small and large incomes alike). The log-transform method will be better at predicting relative incomes (a scoring error of $50,000 being less dire for large incomes than for small incomes).
+
+## Predictions
+
+```{r}
+train$pred <- predict(model, newdata = train, type = "response")
+test$pred <- predict(model, newdata = test, type = "response")
+```
+
+```{r}
+sum(train$atRisk == TRUE)
+sum(train$pred)
+```
+
+```{r}
+premature <- train[train$GESTREC3 == "< 37 weeks", ]
+sum(premature$atRisk == TRUE)
+sum(premature$pred)
+```
+
+### Prediction quality
+
+```{r pracdsr-logreg-1}
+WVPlots::DoubleDensityPlot(train, "pred", "atRisk",
+                           title = "Distribution of natality risk scores")
+```
+
+Two sub-distributions are identified, but they are not easily seperable by a threshold value.
+
+### Enrichment and recall
+
+```{r pracdsr-logreg-2}
+library(ggplot2)
+plt <- WVPlots::PRTPlot(train, "pred", "atRisk", TRUE,
+                        plotvars = c("enrichment", "recall"),
+                        thresholdrange = c(0, 0.05),
+                        title = "Precision/recall vs. threshold for natality model")
+plt + geom_vline(xintercept = 0.02, color = "red", linetype = 2)
+```
+
+With a threshold of 0.02 will identify those with a risk 2.5 times higher than the overall population and contains about half of the true at-risk situations.
+
+```{r}
+( ctab_test <- table(pred = test$pred > 0.02, atRisk = test$atRisk) )
+```
+
+```{r}
+( precision <- ctab_test[2,2]/sum(ctab_test[2,]) )
+( recall <- ctab_test[2,2]/sum(ctab_test[, 2]) )
+( enrichment <- precision / mean(as.numeric(test$atRisk)) )
+```
+
+The resulting classifier is low-precision, but identifies a set of potential at-risk cases that contains 55.5% of the true positive cases in the test set, at a rate 2.66 times higher than the overall average. T
+
+
+```{r}
+sum(ctab_test[, 2])
+```
+
+## Finding relations and extracting advice
+
+```{r}
+coefficients(model)
+```
+
+### Interpreting coefficients
+
+Suppose a full-term baby with certain characteristics has a 1% probability of being at risk. Then the risk odds for that baby are p/(1-p), or 0.01/0.99 = 0.0101. What are the risk odds (and the risk probability) for a baby with the same characteristics, but born prematurely?
+
+The odds of being at risk are 4.68883 times higher for GESTREC3 < 37 weeks.
+
+```{r}
+( odds <- exp(1.545183) )
+```
+
+The risk odds for the premature baby with the same characteristics would be:
+
+```{r}
+( odds <- odds * 0.0101 )
+```
+
+
+```{r}
+( probability <- odds / (1 + odds) )
+```
+
+## Model summary
+
+```{r}
+summary(model)
+```
+
+Deviance residuals are useful for grouped data, not for ungrouped data like in this case.
+
+```{r}
+summary(summary(model)$deviance.resid)
+```
+
+Null deviance is similar to the variance of the data around the average rate of positive examples. Residual deviance is similar to the variance of data around the model. Residual deviance should be small compared to null deviance.
+
+### Computing deviance
+
+```{r}
+# y is the outcome in numeric form, py is the predicted probability that y == 1
+loglikelihood <- function(y, py) {
+  sum(y * log(py) + (1 - y) * log(1 - py))
+}
+( pnull <- mean(as.numeric(train$atRisk)) )
+( null_dev <- -2 * loglikelihood(as.numeric(train$atRisk), pnull) )
+model$null.deviance
+
+pred <- predict(model, newdata = train, type = "response")
+( resid_dev <- -2 * loglikelihood(as.numeric(train$atRisk), pred) )
+model$deviance
+```
+
+For test data
+
+```{r}
+test_y <- as.numeric(test$atRisk)
+test_pred <- predict(model, newdata = test, type = "response")
+( pnull_test <- mean(test_y) )
+( null_dev_test <- -2 * loglikelihood(test_y, pnull_test) )
+( resid_dev_test <- -2 * loglikelihood(test_y, test_pred) )
+```
+
+### Pseudo R-squared
+
+As expected, the model is not highly predictive.
+
+```{r}
+( pr2 <- 1 - (resid_dev / null_dev) )
+( pr2_test <- 1 - (resid_dev_test / null_dev_test) )
+```
+
+### Chi-squared test
+
+Degrees of freedom
+
+```{r}
+( df_null <- dim(train)[[1]] - 1 )
+( df_model <- dim(train)[[1]] - length(model$coefficients) )
+( del_dev <- null_dev - resid_dev )
+( del_df <- df_null - df_model )
+( p <- pchisq(del_dev, del_df, lower.tail = F) )
+```
+
+The p-value is very small; it’s extremely unlikely that we could’ve seen this much reduction in deviance by chance. This means it is plausible (but unfortunately not definitive) that this model has found informative patterns in the data.
+
+
+### AIC
+
+The AIC is generally used to decide which and how many input variables to use in the model. If you train many different models with different sets of variables on the same training set, you can consider the model with the lowest AIC to be the best fit.
+
+```{r}
+( aic <- 2 * (length(model$coefficients) -
+              loglikelihood(as.numeric(train$atRisk), pred)) )
+```
+
+
+### Collinearity and significance
+
+If birth weight is added, a number of variables lose significance, because they are correlated to birth weight. With birth weight in the model, it becomes the most significant variable. Since birth weight is not known in advance, we can't use it.
+
+```{r}
+y <- "atRisk"
+x <- c("PWGT", "UPREVIS", "CIG_REC", "GESTREC3", "DPLURAL",
+       complications, risk_factors, "DBWT")
+fmla <- wrapr::mk_formula(y, x)
+model_2 <- glm(fmla, data = train, family = binomial(link = "logit"))
+summary(model_2)
+```
+
+
+
+
