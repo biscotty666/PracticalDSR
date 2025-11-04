@@ -1,0 +1,258 @@
+---
+title: "Regularization"
+format: gfm
+---
+
+```{r, setup, include=FALSE}
+knitr::opts_chunk$set(paged.print = FALSE)
+```
+
+```{r}
+#| message: false
+library(data.table)
+```
+
+Overly large coefficient magnitudes and standard errors can indicate collinear variables in linear or logistic regression, or separation or quasi-separation in a logistic model.
+
+
+# Quasi-separation example
+
+## Data prep
+
+For this example, you will use again use the car data from the UCI Machine Learning
+Repository that you used in chapter 2. This dataset has information on 1728 makes of
+auto, with the following variables:
+
+- car_price—(vhigh, high, med, low)
+- maint_price—(vhigh, high, med, low)
+- doors—(2, 3, 4, 5, more)
+- persons—(2, 4, more)
+- lug_boot —(small, med, big)
+- safety—(low, med, high)
+
+Target variable is rating (vgood, good, acc, unacc)
+
+```{r}
+cars <- fread("repo-clone/UCICar/car.data.csv", header = T, stringsAsFactors = T)
+vars <- setdiff(colnames(cars), "rating")
+
+cars$fail <- cars$rating == "unacc"
+outcome <- "fail"
+```
+
+```{r}
+set.seed(24351)
+gp <- runif(nrow(cars))
+library(zeallot)
+c(cars_test, cars_train) %<-% split(cars, gp < 0.7)
+nrow(cars_test); nrow(cars_train)
+```
+
+## Logistic regression model
+
+```{r}
+( fmla <- wrapr::mk_formula(outcome, vars) )
+model_glm <- glm(fmla, data = cars_train, family = binomial)
+```
+
+The error indicates the problem is quasi-seperable, that some set of variables perfectly predicts a subset of the data.
+
+```{r}
+summary(model_glm)
+```
+
+Three variables have extremely large coefficients and standard errors. The number of iterations is unusually high.
+
+```{r pracdsr-regul-1}
+coefs <- coef(model_glm)[-1]
+coef_df <- data.frame(coef = names(coefs),
+                      value = coefs)
+
+library(ggplot2)
+ggplot(coef_df, aes(x = coef, y = value)) +
+  geom_pointrange(aes(ymin = 0, ymax = value)) +
+  ggtitle("Coefficients of logistic regression model") +
+  coord_flip()
+```
+
+Model's test performance
+
+```{r}
+cars_test$pred_glm <- predict(model_glm, newdata = cars_test, type = "response")
+confmat <- function(df, predvar) {
+  cmat <- table(truth = ifelse(df$fail > 0.5, "unacceptable", "passed"),
+                prediction = ifelse(df[[predvar]] > 0.5, "unacceptable", "passed"))
+  accuracy <- sum(diag(cmat)) / sum(cmat)
+  deviance <- sigr::calcDeviance(df[[predvar]], df$fail)
+  list(confusion_matrix = cmat,
+       accuracy = accuracy,
+       deviance = deviance)
+}
+confmat(cars_test, "pred_glm")
+```
+
+The model appears to be good, but the large coefficients make it untrustworthy. Regularization penalizes large coefficients and biases them to 0.
+
+# Types of regularized regression
+
+- Ridge (L2): minimize prediction error while minimizing the sum of squared magnitudes of the coefficients
+
+$$
+(y - f(x))^2 + \lambda * (b[1]^2 + ...
+ + b[n]^2)
+$$
+
+With lambda >= 0
+
+- Lasso (L1): minimize training prediction error while minimizing the sum of the absolute value of the coefficients
+
+$$
+(y - f(x))^2 + \lambda * ( abs(b[1]) + abs(b[2]) + .... abs(b[n]) )
+$$
+
+- Elastic Net: combination of both
+
+$$
+(1 - \alpha) * (b[1]^2 + ... + b[n]^2) +
+\alpha * ( abs(b[1]) + abs(b[2]) + .... abs(b[n]) )
+$$
+
+When alpha = 0, this reduces to ridge regression; when alpha = 1, it reduces to lasso.
+
+# Regularized regression with glmnet
+
+## Ridge regression
+
+```{r}
+#| message: false
+library(glmnet)
+library(glmnetUtils)
+
+( model_ridge <- cv.glmnet(fmla, cars_train, 
+                           alpha = 0, family = "binomial") )
+```
+
+When predicting on the model, it uses the +1SE model by default as it is less likely to be overfit than the lambda minimum.
+
+```{r}
+( coefs <- coef(model_ridge) )
+```
+
+```{r}
+( coefs_min <- coef(model_ridge, s = model_ridge$lambda.min) )
+```
+
+```{r}
+coefs - coefs_min
+```
+
+```{r pracdsr-regul-2}
+coef_df <- data.frame(coef = rownames(coefs)[-1],
+                      value = coefs[-1,1])
+
+ggplot(coef_df, aes(x = coef, y = value)) +
+  geom_pointrange(aes(ymin = 0, ymax = value)) +
+  ggtitle("Coefficients of ridge model") +
+  coord_flip()
+```
+
+Evaluate against test data
+
+```{r}
+prediction <- predict(model_ridge, newdata = cars_test, type = "response")
+
+cars_test$pred_ridge <- as.numeric(prediction)
+
+confmat(cars_test, "pred_ridge")
+```
+
+```{r}
+cars_test$pred_min <- as.numeric(
+  predict(model_ridge, newdata = cars_test, type = "response",
+          s = model_ridge$lambda.min)
+)
+confmat(cars_test, "pred_min")
+```
+
+## Lasso Regression
+
+Same with alpha = 1.
+
+```{r}
+( model_lasso <- cv.glmnet(fmla, cars_train, alpha = 1, family = "binomial") )
+```
+
+```{r}
+( coefs_lasso <- coef(model_lasso) )
+```
+
+```{r pracdsr-regul-3}
+coef_df <- data.frame(coef = rownames(coefs_lasso)[-1],
+                      value = coefs_lasso[-1,1])
+
+ggplot(coef_df, aes(x = coef, y = value)) +
+  geom_pointrange(aes(ymin = 0, ymax = value)) +
+  ggtitle("Coefficients of lasso model") +
+  coord_flip()
+```
+
+Still large coefficients but some are zeroed out.
+
+```{r}
+cars_test$pred_lasso <- as.numeric(
+  predict(model_lasso, newdata = cars_test, type = "response",
+          s = model_lasso$lambda.min)
+)
+confmat(cars_test, "pred_lasso")
+```
+
+Same accuracy as ridge, but much lower deviance.
+
+## Elastic Net `cva.glmnet()`
+
+```{r}
+( elastic_net <- cva.glmnet(fmla, cars_train, family = "binomial") )
+```
+
+`net$aplha` contains all the alphas tested, and `net$modlist` contains the corresponding models.
+
+```{r}
+elastic_net$alpha
+elastic_net$modlist[[1]]
+```
+
+```{r pracdsr-regul-4}
+get_cvm <- function(model) {
+  index <- match(model$lambda.1se, model$lambda)
+  model$cvm[index]
+}
+
+enet_performance <- data.frame(alpha = elastic_net$alpha)
+models <- elastic_net$modlist
+enet_performance$cvm <- vapply(models, get_cvm, numeric(1))
+enet_performance
+minix <- which.min(enet_performance$cvm)
+( best_alpha <- elastic_net$alpha[minix] )
+
+ggplot(enet_performance, aes(x = alpha, y = cvm)) +
+  geom_point() +
+  geom_line() +
+  geom_vline(xintercept = best_alpha, color = "red", linetype = 2) +
+  ggtitle("CV loss as a function of alpha")
+```
+
+It is recommended to run this multiple times and average the results.
+
+```{r}
+( model_enet <- cv.glmnet(fmla, cars_train,
+                          alpha = best_alpha, family = "binomial") )
+```
+
+```{r}
+cars_test$pred_enet <- as.numeric(
+  predict(model_enet, newdata = cars_test, type = "response")
+)
+confmat(cars_test, "pred_enet")
+```
+
+
